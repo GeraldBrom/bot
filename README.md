@@ -22,4 +22,4 @@
 Откройте терминал в папке проекта и выполните:
 
 ```bash
-npm install node-telegram-bot-api https-proxy-agent
+npm install node-telegram-bot-api dotnev https-proxy-agent
