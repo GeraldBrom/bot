@@ -22,8 +22,8 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 COPY package*.json ./
 
 # --- ДОБАВЛЕНА УСТАНОВКА ЗАВИСИМОСТЕЙ ---
-# Устанавливаем основные библиотеки: telegram-bot-api, прокси и dotenv
-RUN npm install node-telegram-bot-api https-proxy-agent dotenv
+# Устанавливаем основные библиотеки: telegram-index-api, прокси и dotenv
+RUN npm install node-telegram-index-api https-proxy-agent dotenv
 
 # Если у вас есть package-lock.json, лучше использовать npm ci, но для явной установки пакетов выше подходит npm install
 # Альтернатива (если хотите установить ВСЕ зависимости из package.json, а не только эти три):
@@ -37,5 +37,5 @@ COPY . .
 
 EXPOSE 3000
 
-# Запускаем бота (файл bot.js)
-CMD ["node", "bot.js"]
+# Запускаем бота (файл index.js)
+CMD ["node", "index.js"]
