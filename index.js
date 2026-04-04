@@ -71,6 +71,17 @@ function unsubscribeUser(userId) {
     }
 }
 
+// 🎯 Генерация упоминаний с разбивкой на пачки (защита от спама)
+function makeMentionChunks(userIds, chunkSize = 30) {
+    const makeMention = (id) => `<a href="tg://user?id=${id}">\u2060</a>`;
+    const chunks = [];
+    for (let i = 0; i < userIds.length; i += chunkSize) {
+        const chunk = userIds.slice(i, i + chunkSize);
+        chunks.push(chunk.map(makeMention).join(''));
+    }
+    return chunks;
+}
+
 // 📢 Рассылка с упоминаниями подписчиков + закрепление
 async function broadcastToChats(text) {
     console.log(`📢 Рассылка: "${text}" для ${registeredChats.size} групп`);
@@ -78,17 +89,7 @@ async function broadcastToChats(text) {
     for (const chatId of registeredChats) {
         try {
             if (subscribers.length > 0) {
-                const makeMention = (id) => `<a href="tg://user?id=${id}">\u2060</a>`;
-                
-                // Разбиваем на пачки по 30 (защита от спам-фильтра)
-                const CHUNK_SIZE = 30;
-                const chunks = [];
-                for (let i = 0; i < subscribers.length; i += CHUNK_SIZE) {
-                    const chunk = subscribers.slice(i, i + CHUNK_SIZE);
-                    chunks.push(chunk.map(makeMention).join(''));
-                }
-
-                // Первое сообщение: упоминания + текст
+                const chunks = makeMentionChunks(subscribers);
                 const firstChunk = chunks.shift() || '';
                 const fullText = `${firstChunk}\n\n${text}`;
                 
@@ -98,24 +99,20 @@ async function broadcastToChats(text) {
                 });
                 console.log(`✅ Доставлено в ${chatId} (${subscribers.length} упоминаний)`);
 
-                // 📌 Закрепляем первое сообщение
                 try {
                     await index.pinChatMessage(chatId, sent.message_id, { disable_notification: true });
                 } catch (pinErr) {
                     console.warn(`⚠️ Не удалось закрепить:`, pinErr.message);
                 }
 
-                // Остальные пачки упоминаний
                 for (const chunk of chunks) {
                     await index.sendMessage(chatId, chunk, { parse_mode: 'HTML' });
                     await new Promise(res => setTimeout(res, 1000));
                 }
             } else {
-                // Нет подписчиков — обычное сообщение
                 await index.sendMessage(chatId, text, { parse_mode: 'HTML' });
                 console.log(`✅ Доставлено в ${chatId} (без упоминаний)`);
             }
-
         } catch (err) {
             console.warn(`⚠️ Ошибка в чате ${chatId}:`, err.message);
             if (err.response?.body?.error_code === 403) {
@@ -125,6 +122,30 @@ async function broadcastToChats(text) {
         }
         await new Promise(res => setTimeout(res, 50));
     }
+}
+
+// 🎯 Отправка сообщения в чат с упоминанием подписчиков (для ивентов)
+async function sendWithMentions(chatId, text) {
+    if (subscribers.length === 0) {
+        return await index.sendMessage(chatId, text, { parse_mode: 'HTML' });
+    }
+
+    const chunks = makeMentionChunks(subscribers);
+    const firstChunk = chunks.shift() || '';
+    const fullText = `${firstChunk}\n\n${text}`;
+    
+    const sent = await index.sendMessage(chatId, fullText, { 
+        parse_mode: 'HTML',
+        disable_web_page_preview: true
+    });
+
+    // Остальные пачки упоминаний
+    for (const chunk of chunks) {
+        await index.sendMessage(chatId, chunk, { parse_mode: 'HTML' });
+        await new Promise(res => setTimeout(res, 1000));
+    }
+    
+    return sent;
 }
 
 console.log('🚀 Бот запущен...');
@@ -162,7 +183,6 @@ index.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     const userName = msg.from.first_name;
     
-    // Если группа — регистрируем её и показываем кнопку подписки
     if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
         registerChat(chatId);
         index.sendMessage(chatId, `Привет, ${userName}! 👋\nЯ бот для сбора на клановые ивенты.`, {
@@ -178,13 +198,12 @@ index.onText(/\/start/, async (msg) => {
         return;
     }
     
-    // Если личка и /start без параметров
     if (msg.chat.type === 'private') {
-        index.sendMessage(chatId, `Привет, ${userName}! 👋\n\nХочешь получать уведомления о посещении торговца?`, {
+        index.sendMessage(chatId, `Привет, ${userName}! 👋\n\nХочешь получать уведомления о клановых ивентах?`, {
             reply_markup: {
                 inline_keyboard: [[
-                    { text: "✅ Да, подписать меня", callback_data: "subscribe_yes" },
-                    { text: "❌ Нет, спасибо", callback_data: "subscribe_no" }
+                    { text: "✅ Да, подписать меня", callback_ "subscribe_yes" },
+                    { text: "❌ Нет, спасибо", callback_ "subscribe_no" }
                 ]]
             }
         });
@@ -199,7 +218,7 @@ index.onText(/\/start subscribe/, (msg) => {
         reply_markup: {
             inline_keyboard: [[
                 { text: "✅ Да, подписать", callback_data: "subscribe_yes" },
-                { text: "❌ Нет", callback_data: "subscribe_no" }
+                { text: "❌ Нет", callback_ "subscribe_no" }
             ]]
         }
     });
@@ -216,7 +235,6 @@ index.onText(/\/unsubscribe/, (msg) => {
 
 // Обработка кнопок (подписка + ивенты)
 index.on('callback_query', (query) => {
-    // 🔹 Подписка на уведомления
     if (query.data === 'subscribe_yes') {
         subscribeUser(query.from.id);
         index.answerCallbackQuery(query.id, { text: '✅ Вы подписаны!' });
@@ -229,7 +247,6 @@ index.on('callback_query', (query) => {
         return;
     }
     
-    // 🔹 Присоединение к ивенту (старая логика)
     if (query.data === 'join_event') {
         joinEvent(query.message.chat.id, query.from.id, query.from.first_name, query.message.message_id, query.id);
         return;
@@ -261,10 +278,14 @@ index.onText(/\/event_start(?:\s+(\d+))?/, async (msg, match) => {
     console.log(`📢 Админ ${msg.from.first_name} запустил сбор на ${durationSec} сек.`);
     activeEvents[chatId] = { participants: [], startTime: Date.now(), duration: durationSec * 1000 };
 
-    index.sendMessage(chatId, `📢 **АДМИН ЗАПУСТИЛ СБОР НА ИВЕНТ!**\n⏳ Время сбора: ${Math.floor(durationSec / 60)} мин.\n\nНажмите кнопку ниже, чтобы записаться!`, {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: "⚔️ Я в деле!", callback_data: "join_event" }]] }
-    }).then((sentMessage) => { activeEvents[chatId].msgId = sentMessage.message_id; });
+    // 🎯 Отправляем с упоминанием подписчиков
+    await sendWithMentions(chatId, `📢 **АДМИН ЗАПУСТИЛ СБОР НА ИВЕНТ!**\n⏳ Время сбора: ${Math.floor(durationSec / 60)} мин.\n\nНажмите кнопку ниже, чтобы записаться!`, {
+        reply_markup: {
+            inline_keyboard: [[{ text: "⚔️ Я в деле!", callback_ "join_event" }]]
+        }
+    }).then((sentMessage) => {
+        activeEvents[chatId].msgId = sentMessage.message_id;
+    });
 
     const timerId = setTimeout(() => finishEvent(chatId), durationSec * 1000);
     activeEvents[chatId].timerId = timerId;
@@ -297,7 +318,7 @@ function joinEvent(chatId, userId, userName, messageId = null, queryId = null) {
         const newText = `📢 **СБОР НА ИВЕНТ**\n⏳ Осталось: ${timeLeft} сек.\n👥 Участников: ${count}\n\nПоследний присоединился: ${userName}`;
         index.editMessageText(newText, {
             chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [[{ text: "⚔️ Я в деле!", callback_data: "join_event" }]] }
+            reply_markup: { inline_keyboard: [[{ text: "⚔️ Я в деле!", callback_ "join_event" }]] }
         }).catch(() => {});
         index.answerCallbackQuery(queryId, { text: 'Вы успешно добавлены! ⚔️' });
     } else {
@@ -344,7 +365,8 @@ function finishEvent(chatId) {
         finalMessage = `🔥 **КЛАНОВЫЙ ИВЕНТ НАЧИНАЕТСЯ!** 🔥\n\n⚔️ Пора в бой!\n\n👥 **Список участников (${count}):**\n${mentionList}\n\n⚠️ **ВАЖНОЕ ПРЕДУПРЕЖДЕНИЕ:**\nВсе, кто записался в список выше, обязаны явиться!\n❌ <b>В случае неявки без уважительной причины — обязательный отчет перед администрацией!</b>`;
     }
 
-    index.sendMessage(chatId, finalMessage, { parse_mode: 'HTML' }).catch(err => {
+    // 🎯 Финальное сообщение тоже с упоминанием подписчиков
+    sendWithMentions(chatId, finalMessage).catch(err => {
         if (err.response && err.response.body.description.includes('have no rights')) {
             index.sendMessage(chatId, '⚠️ ОШИБКА: Дайте боту права админа для упоминаний!');
         }
