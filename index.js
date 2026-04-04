@@ -1,5 +1,8 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+import cron from 'node-cron';
 
 dotenv.config();
 
@@ -13,11 +16,74 @@ if (!token || token.includes(' ') || token.length < 40) {
 const index = new TelegramBot(token, { polling: true });
 const activeEvents = {};
 
+// 📁 Хранилище пользователей для рассылки
+const USERS_FILE = path.join(process.cwd(), 'users.json');
+
+function loadUsers() {
+    try {
+        if (fs.existsSync(USERS_FILE)) {
+            const data = fs.readFileSync(USERS_FILE, 'utf8');
+            return new Set(JSON.parse(data));
+        }
+    } catch (e) {
+        console.error('❌ Ошибка загрузки пользователей:', e.message);
+    }
+    return new Set();
+}
+
+function saveUsers(users) {
+    try {
+        fs.writeFileSync(USERS_FILE, JSON.stringify([...users]), 'utf8');
+    } catch (e) {
+        console.error('❌ Ошибка сохранения пользователей:', e.message);
+    }
+}
+
+let registeredUsers = loadUsers();
+
+function registerUser(userId) {
+    if (!registeredUsers.has(userId)) {
+        registeredUsers.add(userId);
+        saveUsers(registeredUsers);
+        console.log(`✅ Пользователь ${userId} добавлен в рассылку`);
+    }
+}
+
+async function broadcastMessage(text) {
+    console.log(`📢 Рассылка: "${text}" для ${registeredUsers.size} пользователей`);
+    
+    for (const userId of registeredUsers) {
+        try {
+            await index.sendMessage(userId, text, { parse_mode: 'HTML' });
+            console.log(`✅ Доставлено пользователю ${userId}`);
+        } catch (err) {
+            if (err.response?.body?.error_code === 403) {
+                console.log(`⚠️ Пользователь ${userId} заблокировал бота — удаляем из списка`);
+                registeredUsers.delete(userId);
+                saveUsers(registeredUsers);
+            } else {
+                console.warn(`⚠️ Не удалось отправить пользователю ${userId}:`, err.message);
+            }
+        }
+        await new Promise(res => setTimeout(res, 30));
+    }
+}
+
 console.log('🚀 Бот запущен (дефолт 5 мин + предупреждение)...');
 
 index.getMe().then((user) => {
     console.log(`✅ Авторизован как: @${user.username}`);
 }).catch(err => console.error('❌ Ошибка авторизации:', err.message));
+
+// 🕛 Ежедневная рассылка в 12:00
+cron.schedule('0 12 * * *', () => {
+    console.log('⏰ Время рассылки: 12:00');
+    broadcastMessage('🏪 <b>Зайдите к торговцу!</b>\nНе забудьте забрать ежедневные награды! ⚔️');
+}, {
+    timezone: 'Europe/Moscow' // 👈 При необходимости замените на ваш часовой пояс
+});
+
+console.log('📅 Запланирована ежедневная рассылка на 12:00');
 
 // --- ФУНКЦИЯ ПРОВЕРКИ АДМИНА ---
 async function isAdmin(chatId, userId) {
@@ -34,8 +100,11 @@ async function isAdmin(chatId, userId) {
 index.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     const userName = msg.from.first_name;
+    
+    // 👇 Регистрируем пользователя для рассылки
+    registerUser(msg.from.id);
 
-    index.sendMessage(chatId, `Привет, ${userName}! 👋\nЯ бот для сбора на клановые ивенты.\n\n **Только админы** управляют сбором.\n⚔️ Все могут участвовать.\n\nКоманды:\n/event_start [сек] - Начать (по умолчанию 5 мин)\n/event_stop - Отменить`);
+    index.sendMessage(chatId, `Привет, ${userName}! 👋\nЯ бот для сбора на клановые ивенты.\n\n🔔 **Каждый день в 12:00** я буду напоминать: "Зайдите к торговцу!"\nЧтобы получать напоминания — просто не блокируйте бота.\n\n**Только админы** управляют сбором.\n⚔️ Все могут участвовать.\n\nКоманды:\n/event_start [сек] - Начать (по умолчанию 5 мин)\n/event_stop - Отменить`);
 });
 
 // 2. Запуск ивента: /event_start [секунды]
@@ -43,7 +112,6 @@ index.onText(/\/event_start(?:\s+(\d+))?/, async (msg, match) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
 
-    // По умолчанию 300 секунд (5 минут), вместо 60
     const durationSec = parseInt(match[1]) || 300;
 
     if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') {
@@ -114,7 +182,7 @@ function joinEvent(chatId, userId, userName, messageId = null, queryId = null) {
     const timeLeft = Math.max(0, Math.ceil((event.duration - (Date.now() - event.startTime)) / 1000));
 
     if (messageId && queryId) {
-        const newText = `📢 **СБОР НА ИВЕНТ**\n⏳ Осталось: ${timeLeft} сек.\n👥 Участников: ${count}\n\nПоследний加入了: ${userName}`;
+        const newText = `📢 **СБОР НА ИВЕНТ**\n⏳ Осталось: ${timeLeft} сек.\n👥 Участников: ${count}\n\nПоследний присоединился: ${userName}`;
 
         index.editMessageText(newText, {
             chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
@@ -167,7 +235,6 @@ function finishEvent(chatId) {
             if (index < count - 1) mentionList += ', ';
         });
 
-        // ИЗМЕНЕНИЕ: Добавлено строгое предупреждение о необходимости отчета
         finalMessage = `🔥 **КЛАНОВЫЙ ИВЕНТ НАЧИНАЕТСЯ!** 🔥\n\n⚔️ Пора в бой!\n\n👥 **Список участников (${count}):**\n${mentionList}\n\n⚠️ **ВАЖНОЕ ПРЕДУПРЕЖДЕНИЕ:**\nВсе, кто записался в список выше, обязаны явиться!\n❌ <b>В случае неявки без уважительной причины — обязательный отчет перед администрацией!</b>`;
     }
 
