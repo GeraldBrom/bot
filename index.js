@@ -82,10 +82,11 @@ function makeMentionChunks(userIds, chunkSize = 30) {
     return chunks;
 }
 
-// 📢 Рассылка с упоминаниями
+// 📢 Рассылка: в группы + в личку подписчикам
 async function broadcastToChats(text) {
     console.log(`📢 Рассылка: "${text}" для ${registeredChats.size} групп`);
     
+    // 1️⃣ Отправка в группы
     for (const chatId of registeredChats) {
         try {
             if (subscribers.length > 0) {
@@ -97,7 +98,7 @@ async function broadcastToChats(text) {
                     parse_mode: 'HTML',
                     disable_web_page_preview: true
                 });
-                console.log(`✅ Доставлено в ${chatId}`);
+                console.log(`✅ Доставлено в группу ${chatId}`);
 
                 try {
                     await index.pinChatMessage(chatId, sent.message_id, { disable_notification: true });
@@ -111,16 +112,33 @@ async function broadcastToChats(text) {
                 }
             } else {
                 await index.sendMessage(chatId, text, { parse_mode: 'HTML' });
-                console.log(`✅ Доставлено в ${chatId} (без упоминаний)`);
+                console.log(`✅ Доставлено в группу ${chatId} (без упоминаний)`);
             }
         } catch (err) {
-            console.warn(`⚠️ Ошибка в чате ${chatId}:`, err.message);
+            console.warn(`⚠️ Ошибка в группе ${chatId}:`, err.message);
             if (err.response?.body?.error_code === 403) {
                 registeredChats.delete(chatId);
                 saveChats(registeredChats);
             }
         }
         await new Promise(res => setTimeout(res, 50));
+    }
+    
+    // 2️⃣ Отправка в личку каждому подписчику
+    if (subscribers.length > 0) {
+        console.log(`📬 Отправка в личку ${subscribers.length} подписчикам`);
+        for (const userId of subscribers) {
+            try {
+                await index.sendMessage(userId, text, { parse_mode: 'HTML' });
+                console.log(`✅ Доставлено в личку пользователю ${userId}`);
+            } catch (err) {
+                console.warn(`⚠️ Не удалось отправить в личку ${userId}:`, err.message);
+                if (err.response?.body?.error_code === 403) {
+                    unsubscribeUser(userId);
+                }
+            }
+            await new Promise(res => setTimeout(res, 30));
+        }
     }
 }
 
@@ -159,7 +177,7 @@ cron.schedule('0 12 * * *', () => {
     broadcastToChats('🏪 <b>Зайдите к торговцу!</b>\nНе забудьте забрать ежедневные награды! ⚔️');
 }, { timezone: 'Europe/Moscow' });
 
-// 🧪 ТЕСТ каждые 2 минуты (удали после тестов)
+// 🧪 ТЕСТ каждые 2 минуты (удали этот блок после тестов!)
 cron.schedule('*/2 * * * *', () => {
     console.log('🧪 [ТЕСТ] Рассылка каждые 2 минуты');
     broadcastToChats('🧪 <b>Тест</b>\nПроверка связи. Удали этот код после тестов! ⚔️');
@@ -178,79 +196,78 @@ async function isAdmin(chatId, userId) {
     }
 }
 
-// 1. Команда /start
+// 1. Команда /start — ПРОСТАЯ ПОДПИСКА ПРЯМО В ГРУППЕ
 index.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     const userName = msg.from.first_name;
+    const userId = msg.from.id;
     
+    // Если группа — регистрируем чат и предлагаем подписаться
     if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
         registerChat(chatId);
-        index.sendMessage(chatId, `Привет, ${userName}! 👋\nЯ бот для сбора на клановые ивенты.`, {
-            reply_markup: {
-                inline_keyboard: [[
-                    { 
-                        text: "🔔 Получать уведомления", 
-                        url: `https://t.me/${index.options.username}?start=subscribe` 
-                    }
-                ]]
-            }
-        });
-        return;
-    }
-    
-    if (msg.chat.type === 'private') {
+        
         index.sendMessage(chatId, `Привет, ${userName}! 👋\n\nХочешь получать уведомления о клановых ивентах?`, {
             reply_markup: {
                 inline_keyboard: [[
-                    { text: "✅ Да, подписать меня", callback_data: "subscribe_yes" },
-                    { text: "❌ Нет, спасибо", callback_data: "subscribe_no" }
+                    { text: "✅ Да, подписать", callback_data: `sub_${userId}` },
+                    { text: "❌ Нет", callback_data: "sub_no" }
                 ]]
             }
         });
-    }
-});
-
-// Обработка /start subscribe
-index.onText(/\/start subscribe/, (msg) => {
-    if (msg.chat.type !== 'private') return;
-    const userName = msg.from.first_name;
-    index.sendMessage(msg.chat.id, `🔔 ${userName}, подтвердить подписку на уведомления?`, {
-        reply_markup: {
-            inline_keyboard: [[
-                { text: "✅ Да, подписать", callback_data: "subscribe_yes" },
-                { text: "❌ Нет", callback_data: "subscribe_no" }
-            ]]
-        }
-    });
-});
-
-// Команда /unsubscribe
-index.onText(/\/unsubscribe/, (msg) => {
-    if (msg.chat.type !== 'private') {
-        return index.sendMessage(msg.chat.id, '❌ Эта команда работает только в личных сообщениях');
-    }
-    unsubscribeUser(msg.from.id);
-    index.sendMessage(msg.chat.id, '✅ Вы отписаны. Чтобы подписаться снова: /start');
-});
-
-// Обработка кнопок
-index.on('callback_query', (query) => {
-    if (query.data === 'subscribe_yes') {
-        subscribeUser(query.from.id);
-        index.answerCallbackQuery(query.id, { text: '✅ Вы подписаны!' });
-        index.sendMessage(query.message.chat.id, '✅ Готово! Теперь вы будете получать уведомления.\nОтписаться: /unsubscribe');
-        return;
-    }
-    if (query.data === 'subscribe_no') {
-        index.answerCallbackQuery(query.id, { text: 'Ок' });
-        index.sendMessage(query.message.chat.id, '👌 Хорошо, если передумаете — напишите /start');
         return;
     }
     
+    // Если личка — просто информируем
+    if (msg.chat.type === 'private') {
+        index.sendMessage(chatId, `Привет, ${userName}! 👋\n\nЧтобы получать уведомления — напиши /start в группе, где играет твой клан.`);
+    }
+});
+
+// Обработка кнопок подписки и ивентов
+index.on('callback_query', async (query) => {
+    // 🔹 Подписка: sub_USERID
+    if (query.data?.startsWith('sub_')) {
+        const targetUserId = parseInt(query.data.replace('sub_', ''));
+        
+        // Проверяем, что нажал тот, для кого кнопка (защита)
+        if (query.from.id !== targetUserId) {
+            return index.answerCallbackQuery(query.id, { text: '⛔ Это не ваша кнопка', show_alert: true });
+        }
+        
+        subscribeUser(targetUserId);
+        await index.answerCallbackQuery(query.id, { text: '✅ Вы подписаны!' });
+        await index.editMessageReplyMarkup({ 
+            chat_id: query.message.chat.id, 
+            message_id: query.message.message_id, 
+            reply_markup: { inline_keyboard: [] } 
+        });
+        await index.sendMessage(query.message.chat.id, `✅ Готово, ${query.from.first_name}! Теперь вы будете получать уведомления.\nОтписаться: /unsubscribe`);
+        return;
+    }
+    
+    // 🔹 Отмена подписки
+    if (query.data === 'sub_no') {
+        await index.answerCallbackQuery(query.id, { text: 'Ок' });
+        await index.editMessageReplyMarkup({ 
+            chat_id: query.message.chat.id, 
+            message_id: query.message.message_id, 
+            reply_markup: { inline_keyboard: [] } 
+        });
+        await index.sendMessage(query.message.chat.id, '👌 Хорошо, если передумаете — напишите /start');
+        return;
+    }
+    
+    // 🔹 Присоединение к ивенту
     if (query.data === 'join_event') {
         joinEvent(query.message.chat.id, query.from.id, query.from.first_name, query.message.message_id, query.id);
         return;
     }
+});
+
+// Команда /unsubscribe (работает в личке и в группе)
+index.onText(/\/unsubscribe/, (msg) => {
+    unsubscribeUser(msg.from.id);
+    index.sendMessage(msg.chat.id, '✅ Вы отписаны от уведомлений. Чтобы подписаться снова: /start');
 });
 
 // 2. Запуск ивента
