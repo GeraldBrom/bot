@@ -180,7 +180,7 @@ index.onText(/\/start/, async (msg) => {
     
     // Если личка и /start без параметров
     if (msg.chat.type === 'private') {
-        index.sendMessage(chatId, `Привет, ${userName}! 👋\n\nХочешь получать уведомления о клановых ивентах?`, {
+        index.sendMessage(chatId, `Привет, ${userName}! 👋\n\nХочешь получать уведомления о посещении торговца?`, {
             reply_markup: {
                 inline_keyboard: [[
                     { text: "✅ Да, подписать меня", callback_data: "subscribe_yes" },
