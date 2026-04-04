@@ -40,7 +40,7 @@ function registerChat(chatId) {
     }
 }
 
-// 📦 Подписчики (пользователи, которые дали согласие на упоминания)
+// 📦 Подписчики
 const SUBSCRIBERS_FILE = path.join(process.cwd(), 'subscribers.json');
 let subscribers = [];
 
@@ -58,7 +58,7 @@ function subscribeUser(userId) {
     if (!subscribers.includes(userId)) {
         subscribers.push(userId);
         fs.writeFileSync(SUBSCRIBERS_FILE, JSON.stringify(subscribers), 'utf8');
-        console.log(`✅ Пользователь ${userId} подписался на уведомления`);
+        console.log(`✅ Пользователь ${userId} подписался`);
     }
 }
 
@@ -71,7 +71,7 @@ function unsubscribeUser(userId) {
     }
 }
 
-// 🎯 Генерация упоминаний с разбивкой на пачки (защита от спама)
+// 🎯 Генерация упоминаний с разбивкой на пачки
 function makeMentionChunks(userIds, chunkSize = 30) {
     const makeMention = (id) => `<a href="tg://user?id=${id}">\u2060</a>`;
     const chunks = [];
@@ -82,7 +82,7 @@ function makeMentionChunks(userIds, chunkSize = 30) {
     return chunks;
 }
 
-// 📢 Рассылка с упоминаниями подписчиков + закрепление
+// 📢 Рассылка с упоминаниями
 async function broadcastToChats(text) {
     console.log(`📢 Рассылка: "${text}" для ${registeredChats.size} групп`);
     
@@ -97,7 +97,7 @@ async function broadcastToChats(text) {
                     parse_mode: 'HTML',
                     disable_web_page_preview: true
                 });
-                console.log(`✅ Доставлено в ${chatId} (${subscribers.length} упоминаний)`);
+                console.log(`✅ Доставлено в ${chatId}`);
 
                 try {
                     await index.pinChatMessage(chatId, sent.message_id, { disable_notification: true });
@@ -124,10 +124,10 @@ async function broadcastToChats(text) {
     }
 }
 
-// 🎯 Отправка сообщения в чат с упоминанием подписчиков (для ивентов)
-async function sendWithMentions(chatId, text) {
+// 🎯 Отправка с упоминаниями (для ивентов)
+async function sendWithMentions(chatId, text, extra = {}) {
     if (subscribers.length === 0) {
-        return await index.sendMessage(chatId, text, { parse_mode: 'HTML' });
+        return await index.sendMessage(chatId, text, { parse_mode: 'HTML', ...extra });
     }
 
     const chunks = makeMentionChunks(subscribers);
@@ -136,10 +136,10 @@ async function sendWithMentions(chatId, text) {
     
     const sent = await index.sendMessage(chatId, fullText, { 
         parse_mode: 'HTML',
-        disable_web_page_preview: true
+        disable_web_page_preview: true,
+        ...extra
     });
 
-    // Остальные пачки упоминаний
     for (const chunk of chunks) {
         await index.sendMessage(chatId, chunk, { parse_mode: 'HTML' });
         await new Promise(res => setTimeout(res, 1000));
@@ -159,7 +159,7 @@ cron.schedule('0 12 * * *', () => {
     broadcastToChats('🏪 <b>Зайдите к торговцу!</b>\nНе забудьте забрать ежедневные награды! ⚔️');
 }, { timezone: 'Europe/Moscow' });
 
-// 🧪 ТЕСТ каждые 2 минуты (удали этот блок после тестов)
+// 🧪 ТЕСТ каждые 2 минуты (удали после тестов)
 cron.schedule('*/2 * * * *', () => {
     console.log('🧪 [ТЕСТ] Рассылка каждые 2 минуты');
     broadcastToChats('🧪 <b>Тест</b>\nПроверка связи. Удали этот код после тестов! ⚔️');
@@ -202,15 +202,15 @@ index.onText(/\/start/, async (msg) => {
         index.sendMessage(chatId, `Привет, ${userName}! 👋\n\nХочешь получать уведомления о клановых ивентах?`, {
             reply_markup: {
                 inline_keyboard: [[
-                    { text: "✅ Да, подписать меня", callback_ "subscribe_yes" },
-                    { text: "❌ Нет, спасибо", callback_ "subscribe_no" }
+                    { text: "✅ Да, подписать меня", callback_data: "subscribe_yes" },
+                    { text: "❌ Нет, спасибо", callback_data: "subscribe_no" }
                 ]]
             }
         });
     }
 });
 
-// Обработка /start subscribe (переход из группы по кнопке)
+// Обработка /start subscribe
 index.onText(/\/start subscribe/, (msg) => {
     if (msg.chat.type !== 'private') return;
     const userName = msg.from.first_name;
@@ -218,22 +218,22 @@ index.onText(/\/start subscribe/, (msg) => {
         reply_markup: {
             inline_keyboard: [[
                 { text: "✅ Да, подписать", callback_data: "subscribe_yes" },
-                { text: "❌ Нет", callback_ "subscribe_no" }
+                { text: "❌ Нет", callback_data: "subscribe_no" }
             ]]
         }
     });
 });
 
-// Команда /unsubscribe (в личке)
+// Команда /unsubscribe
 index.onText(/\/unsubscribe/, (msg) => {
     if (msg.chat.type !== 'private') {
-        return index.sendMessage(msg.chat.id, '❌ Эта команда работает только в личных сообщениях с ботом');
+        return index.sendMessage(msg.chat.id, '❌ Эта команда работает только в личных сообщениях');
     }
     unsubscribeUser(msg.from.id);
-    index.sendMessage(msg.chat.id, '✅ Вы отписаны от уведомлений. Чтобы подписаться снова: /start');
+    index.sendMessage(msg.chat.id, '✅ Вы отписаны. Чтобы подписаться снова: /start');
 });
 
-// Обработка кнопок (подписка + ивенты)
+// Обработка кнопок
 index.on('callback_query', (query) => {
     if (query.data === 'subscribe_yes') {
         subscribeUser(query.from.id);
@@ -253,7 +253,7 @@ index.on('callback_query', (query) => {
     }
 });
 
-// 2. Запуск ивента: /event_start [секунды]
+// 2. Запуск ивента
 index.onText(/\/event_start(?:\s+(\d+))?/, async (msg, match) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
@@ -278,10 +278,9 @@ index.onText(/\/event_start(?:\s+(\d+))?/, async (msg, match) => {
     console.log(`📢 Админ ${msg.from.first_name} запустил сбор на ${durationSec} сек.`);
     activeEvents[chatId] = { participants: [], startTime: Date.now(), duration: durationSec * 1000 };
 
-    // 🎯 Отправляем с упоминанием подписчиков
     await sendWithMentions(chatId, `📢 **АДМИН ЗАПУСТИЛ СБОР НА ИВЕНТ!**\n⏳ Время сбора: ${Math.floor(durationSec / 60)} мин.\n\nНажмите кнопку ниже, чтобы записаться!`, {
         reply_markup: {
-            inline_keyboard: [[{ text: "⚔️ Я в деле!", callback_ "join_event" }]]
+            inline_keyboard: [[{ text: "⚔️ Я в деле!", callback_data: "join_event" }]]
         }
     }).then((sentMessage) => {
         activeEvents[chatId].msgId = sentMessage.message_id;
@@ -291,7 +290,7 @@ index.onText(/\/event_start(?:\s+(\d+))?/, async (msg, match) => {
     activeEvents[chatId].timerId = timerId;
 });
 
-// 3. Обработка кнопки /join
+// 3. Ручное присоединение /join
 index.onText(/\/join/, (msg) => {
     if (activeEvents[msg.chat.id]) {
         joinEvent(msg.chat.id, msg.from.id, msg.from.first_name, null, null);
@@ -318,7 +317,7 @@ function joinEvent(chatId, userId, userName, messageId = null, queryId = null) {
         const newText = `📢 **СБОР НА ИВЕНТ**\n⏳ Осталось: ${timeLeft} сек.\n👥 Участников: ${count}\n\nПоследний присоединился: ${userName}`;
         index.editMessageText(newText, {
             chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [[{ text: "⚔️ Я в деле!", callback_ "join_event" }]] }
+            reply_markup: { inline_keyboard: [[{ text: "⚔️ Я в деле!", callback_data: "join_event" }]] }
         }).catch(() => {});
         index.answerCallbackQuery(queryId, { text: 'Вы успешно добавлены! ⚔️' });
     } else {
@@ -365,7 +364,6 @@ function finishEvent(chatId) {
         finalMessage = `🔥 **КЛАНОВЫЙ ИВЕНТ НАЧИНАЕТСЯ!** 🔥\n\n⚔️ Пора в бой!\n\n👥 **Список участников (${count}):**\n${mentionList}\n\n⚠️ **ВАЖНОЕ ПРЕДУПРЕЖДЕНИЕ:**\nВсе, кто записался в список выше, обязаны явиться!\n❌ <b>В случае неявки без уважительной причины — обязательный отчет перед администрацией!</b>`;
     }
 
-    // 🎯 Финальное сообщение тоже с упоминанием подписчиков
     sendWithMentions(chatId, finalMessage).catch(err => {
         if (err.response && err.response.body.description.includes('have no rights')) {
             index.sendMessage(chatId, '⚠️ ОШИБКА: Дайте боту права админа для упоминаний!');
