@@ -41,7 +41,7 @@ function saveChats(chats) {
 
 let registeredChats = loadChats();
 
-// ✅ Регистрируем ЧАТ (группу), а не пользователя
+// Регистрируем ЧАТ (группу), а не пользователя
 function registerChat(chatId) {
     if (!registeredChats.has(chatId)) {
         registeredChats.add(chatId);
@@ -50,7 +50,7 @@ function registerChat(chatId) {
     }
 }
 
-// 📢 Рассылка в ГРУППЫ (а не в личку)
+//  Рассылка в ГРУППЫ
 async function broadcastToChats(text) {
     console.log(`📢 Рассылка: "${text}" для ${registeredChats.size} групп`);
     
@@ -85,15 +85,6 @@ cron.schedule('0 12 * * *', () => {
     timezone: 'Europe/Moscow'
 });
 
-// 🧪 ТЕСТОВАЯ РАССЫЛКА КАЖДЫЕ 2 МИНУТЫ (удали этот блок после тестов!)
-cron.schedule('*/2 * * * *', () => {
-    console.log('🧪 [ТЕСТ] Рассылка каждые 2 минуты');
-    broadcastToChats('🧪 <b>Тестовое уведомление</b>\nПроверка связи каждые 2 минуты. Удали этот код после тестов! ⚔️');
-}, {
-    timezone: 'Europe/Moscow'
-});
-console.log('🧪 Запущен тестовый режим: рассылка каждые 2 минуты (удали после тестов!)');
-
 console.log('📅 Запланирована ежедневная рассылка на 12:00');
 
 // --- ФУНКЦИЯ ПРОВЕРКИ АДМИНА ---
@@ -112,7 +103,7 @@ index.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     const userName = msg.from.first_name;
     
-    // 👇 Если это группа — регистрируем её для рассылки
+    // Если это группа — регистрируем её для рассылки
     if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
         registerChat(chatId);
     }
