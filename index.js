@@ -16,72 +16,83 @@ if (!token || token.includes(' ') || token.length < 40) {
 const index = new TelegramBot(token, { polling: true });
 const activeEvents = {};
 
-// 📁 Хранилище пользователей для рассылки
-const USERS_FILE = path.join(process.cwd(), 'users.json');
+// 📁 Хранилище ЧАТОВ (групп), а не пользователей
+const CHATS_FILE = path.join(process.cwd(), 'chats.json');
 
-function loadUsers() {
+function loadChats() {
     try {
-        if (fs.existsSync(USERS_FILE)) {
-            const data = fs.readFileSync(USERS_FILE, 'utf8');
+        if (fs.existsSync(CHATS_FILE)) {
+            const data = fs.readFileSync(CHATS_FILE, 'utf8');
             return new Set(JSON.parse(data));
         }
     } catch (e) {
-        console.error('❌ Ошибка загрузки пользователей:', e.message);
+        console.error('❌ Ошибка загрузки чатов:', e.message);
     }
     return new Set();
 }
 
-function saveUsers(users) {
+function saveChats(chats) {
     try {
-        fs.writeFileSync(USERS_FILE, JSON.stringify([...users]), 'utf8');
+        fs.writeFileSync(CHATS_FILE, JSON.stringify([...chats]), 'utf8');
     } catch (e) {
-        console.error('❌ Ошибка сохранения пользователей:', e.message);
+        console.error('❌ Ошибка сохранения чатов:', e.message);
     }
 }
 
-let registeredUsers = loadUsers();
+let registeredChats = loadChats();
 
-function registerUser(userId) {
-    if (!registeredUsers.has(userId)) {
-        registeredUsers.add(userId);
-        saveUsers(registeredUsers);
-        console.log(`✅ Пользователь ${userId} добавлен в рассылку`);
+// ✅ Регистрируем ЧАТ (группу), а не пользователя
+function registerChat(chatId) {
+    if (!registeredChats.has(chatId)) {
+        registeredChats.add(chatId);
+        saveChats(registeredChats);
+        console.log(`✅ Группа ${chatId} добавлена в рассылку`);
     }
 }
 
-async function broadcastMessage(text) {
-    console.log(`📢 Рассылка: "${text}" для ${registeredUsers.size} пользователей`);
+// 📢 Рассылка в ГРУППЫ (а не в личку)
+async function broadcastToChats(text) {
+    console.log(`📢 Рассылка: "${text}" для ${registeredChats.size} групп`);
     
-    for (const userId of registeredUsers) {
+    for (const chatId of registeredChats) {
         try {
-            await index.sendMessage(userId, text, { parse_mode: 'HTML' });
-            console.log(`✅ Доставлено пользователю ${userId}`);
+            await index.sendMessage(chatId, text, { parse_mode: 'HTML' });
+            console.log(`✅ Доставлено в чат ${chatId}`);
         } catch (err) {
+            console.warn(`⚠️ Не удалось отправить в чат ${chatId}:`, err.message);
+            // Если бота удалили из чата — убираем из списка
             if (err.response?.body?.error_code === 403) {
-                console.log(`⚠️ Пользователь ${userId} заблокировал бота — удаляем из списка`);
-                registeredUsers.delete(userId);
-                saveUsers(registeredUsers);
-            } else {
-                console.warn(`⚠️ Не удалось отправить пользователю ${userId}:`, err.message);
+                console.log(`⚠️ Чат ${chatId} заблокировал бота — удаляем из рассылки`);
+                registeredChats.delete(chatId);
+                saveChats(registeredChats);
             }
         }
         await new Promise(res => setTimeout(res, 30));
     }
 }
 
-console.log('🚀 Бот запущен (дефолт 5 мин + предупреждение)...');
+console.log('🚀 Бот запущен...');
 
 index.getMe().then((user) => {
     console.log(`✅ Авторизован как: @${user.username}`);
 }).catch(err => console.error('❌ Ошибка авторизации:', err.message));
 
-// 🕛 Ежедневная рассылка в 12:00
+// 🕛 Ежедневная рассылка в 12:00 (поменяй 12 на 22, если нужно)
 cron.schedule('0 12 * * *', () => {
     console.log('⏰ Время рассылки: 12:00');
-    broadcastMessage('🏪 <b>Зайдите к торговцу!</b>\nНе забудьте забрать ежедневные награды! ⚔️');
+    broadcastToChats('🏪 <b>Зайдите к торговцу!</b>\nНе забудьте забрать ежедневные награды! ⚔️');
 }, {
-    timezone: 'Europe/Moscow' // 👈 При необходимости замените на ваш часовой пояс
+    timezone: 'Europe/Moscow'
 });
+
+// 🧪 ТЕСТОВАЯ РАССЫЛКА КАЖДЫЕ 2 МИНУТЫ (удали этот блок после тестов!)
+cron.schedule('*/2 * * * *', () => {
+    console.log('🧪 [ТЕСТ] Рассылка каждые 2 минуты');
+    broadcastToChats('🧪 <b>Тестовое уведомление</b>\nПроверка связи каждые 2 минуты. Удали этот код после тестов! ⚔️');
+}, {
+    timezone: 'Europe/Moscow'
+});
+console.log('🧪 Запущен тестовый режим: рассылка каждые 2 минуты (удали после тестов!)');
 
 console.log('📅 Запланирована ежедневная рассылка на 12:00');
 
@@ -101,10 +112,12 @@ index.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     const userName = msg.from.first_name;
     
-    // 👇 Регистрируем пользователя для рассылки
-    registerUser(msg.from.id);
+    // 👇 Если это группа — регистрируем её для рассылки
+    if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
+        registerChat(chatId);
+    }
 
-    index.sendMessage(chatId, `Привет, ${userName}! 👋\nЯ бот для сбора на клановые ивенты.\n\n🔔 **Каждый день в 12:00** я буду напоминать: "Зайдите к торговцу!"\nЧтобы получать напоминания — просто не блокируйте бота.\n\n**Только админы** управляют сбором.\n⚔️ Все могут участвовать.\n\nКоманды:\n/event_start [сек] - Начать (по умолчанию 5 мин)\n/event_stop - Отменить`);
+    index.sendMessage(chatId, `Привет, ${userName}! 👋\nЯ бот для сбора на клановые ивенты.\n\n🔔 **Каждый день в 12:00** я буду напоминать: "Зайдите к торговцу!"\n💡 *Напиши /start в группе, чтобы добавить её в рассылку*\n\n**Только админы** управляют сбором.\n⚔️ Все могут участвовать.\n\nКоманды:\n/event_start [сек] - Начать (по умолчанию 5 мин)\n/event_stop - Отменить`);
 });
 
 // 2. Запуск ивента: /event_start [секунды]
