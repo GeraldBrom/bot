@@ -71,7 +71,7 @@ function unsubscribeUser(userId) {
     }
 }
 
-// 🎯 Генерация упоминаний с разбивкой на пачки
+// 🎯 Упоминания с разбивкой на пачки
 function makeMentionChunks(userIds, chunkSize = 30) {
     const makeMention = (id) => `<a href="tg://user?id=${id}">\u2060</a>`;
     const chunks = [];
@@ -82,11 +82,10 @@ function makeMentionChunks(userIds, chunkSize = 30) {
     return chunks;
 }
 
-// 📢 Рассылка: в группы + в личку подписчикам
+// 📢 Рассылка: группы + личка подписчикам
 async function broadcastToChats(text) {
     console.log(`📢 Рассылка: "${text}" для ${registeredChats.size} групп`);
     
-    // 1️⃣ Отправка в группы
     for (const chatId of registeredChats) {
         try {
             if (subscribers.length > 0) {
@@ -124,13 +123,13 @@ async function broadcastToChats(text) {
         await new Promise(res => setTimeout(res, 50));
     }
     
-    // 2️⃣ Отправка в личку каждому подписчику
+    // Личка подписчикам
     if (subscribers.length > 0) {
         console.log(`📬 Отправка в личку ${subscribers.length} подписчикам`);
         for (const userId of subscribers) {
             try {
                 await index.sendMessage(userId, text, { parse_mode: 'HTML' });
-                console.log(`✅ Доставлено в личку пользователю ${userId}`);
+                console.log(`✅ Доставлено в личку ${userId}`);
             } catch (err) {
                 console.warn(`⚠️ Не удалось отправить в личку ${userId}:`, err.message);
                 if (err.response?.body?.error_code === 403) {
@@ -147,7 +146,6 @@ async function sendWithMentions(chatId, text, extra = {}) {
     if (subscribers.length === 0) {
         return await index.sendMessage(chatId, text, { parse_mode: 'HTML', ...extra });
     }
-
     const chunks = makeMentionChunks(subscribers);
     const firstChunk = chunks.shift() || '';
     const fullText = `${firstChunk}\n\n${text}`;
@@ -162,7 +160,6 @@ async function sendWithMentions(chatId, text, extra = {}) {
         await index.sendMessage(chatId, chunk, { parse_mode: 'HTML' });
         await new Promise(res => setTimeout(res, 1000));
     }
-    
     return sent;
 }
 
@@ -171,21 +168,21 @@ index.getMe().then(user => {
     console.log(`✅ Авторизован как: @${user.username}`);
 }).catch(err => console.error('❌ Ошибка авторизации:', err.message));
 
-// 🕛 Ежедневная рассылка в 12:00
+// 🕛 Рассылка в 12:00
 cron.schedule('0 12 * * *', () => {
     console.log('⏰ Время рассылки: 12:00');
     broadcastToChats('🏪 <b>Зайдите к торговцу!</b>\nНе забудьте забрать ежедневные награды! ⚔️');
 }, { timezone: 'Europe/Moscow' });
 
 // 🧪 ТЕСТ каждые 2 минуты (удали этот блок после тестов!)
-cron.schedule('*/2 * * * *', () => {
-    console.log('🧪 [ТЕСТ] Рассылка каждые 2 минуты');
-    broadcastToChats('🧪 <b>Тест</b>\nПроверка связи. Удали этот код после тестов! ⚔️');
-}, { timezone: 'Europe/Moscow' });
+// cron.schedule('*/2 * * * *', () => {
+//     console.log('🧪 [ТЕСТ] Рассылка каждые 2 минуты');
+//     broadcastToChats('🧪 <b>Тест</b>\nПроверка связи. ⚔️');
+// }, { timezone: 'Europe/Moscow' });
 
 console.log('📅 Запланирована рассылка на 12:00 + тест каждые 2 мин');
 
-// --- ФУНКЦИЯ ПРОВЕРКИ АДМИНА ---
+// --- ПРОВЕРКА АДМИНА ---
 async function isAdmin(chatId, userId) {
     try {
         const admins = await index.getChatAdministrators(chatId);
@@ -196,78 +193,122 @@ async function isAdmin(chatId, userId) {
     }
 }
 
-// 1. Команда /start — ПРОСТАЯ ПОДПИСКА ПРЯМО В ГРУППЕ
+// 1. Команда /start — ПРОСТАЯ ПОДПИСКА ОДНОЙ КНОПКОЙ В ГРУППЕ
 index.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     const userName = msg.from.first_name;
     const userId = msg.from.id;
     
-    // Если группа — регистрируем чат и предлагаем подписаться
     if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
         registerChat(chatId);
-        
         index.sendMessage(chatId, `Привет, ${userName}! 👋\n\nХочешь получать уведомления о клановых ивентах?`, {
             reply_markup: {
                 inline_keyboard: [[
-                    { text: "✅ Да, подписать", callback_data: `sub_${userId}` },
-                    { text: "❌ Нет", callback_data: "sub_no" }
+                    { text: "✅ Подписаться", callback_data: `sub_${userId}` }
                 ]]
             }
         });
         return;
     }
     
-    // Если личка — просто информируем
     if (msg.chat.type === 'private') {
-        index.sendMessage(chatId, `Привет, ${userName}! 👋\n\nЧтобы получать уведомления — напиши /start в группе, где играет твой клан.`);
+        index.sendMessage(chatId, `Привет, ${userName}! 👋\n\nЧтобы подписаться — напиши /start в группе.`);
     }
 });
 
-// Обработка кнопок подписки и ивентов
 index.on('callback_query', async (query) => {
     // 🔹 Подписка: sub_USERID
     if (query.data?.startsWith('sub_')) {
         const targetUserId = parseInt(query.data.replace('sub_', ''));
         
-        // Проверяем, что нажал тот, для кого кнопка (защита)
+        // Защита: только тот, кому адресована кнопка
         if (query.from.id !== targetUserId) {
-            return index.answerCallbackQuery(query.id, { text: '⛔ Это не ваша кнопка', show_alert: true });
+            // Игнорируем ошибку, если время ответа истекло
+            await safeAnswerCallback(query, '⛔ Это не ваша кнопка', true);
+            return;
         }
         
+        // Сначала отвечаем на callback (чтобы убрать "часики" загрузки)
+        await safeAnswerCallback(query, '✅ Вы подписаны!');
+        
+        // Скрываем кнопку
+        await safeEditMarkup(query, { inline_keyboard: [] });
+        
+        // Основная логика
         subscribeUser(targetUserId);
-        await index.answerCallbackQuery(query.id, { text: '✅ Вы подписаны!' });
-        await index.editMessageReplyMarkup({ 
-            chat_id: query.message.chat.id, 
-            message_id: query.message.message_id, 
-            reply_markup: { inline_keyboard: [] } 
-        });
-        await index.sendMessage(query.message.chat.id, `✅ Готово, ${query.from.first_name}! Теперь вы будете получать уведомления.\nОтписаться: /unsubscribe`);
+        await index.sendMessage(query.message.chat.id, 
+            ` Готово, ${query.from.first_name}! Теперь вы будете получать уведомления.\nОтписаться: /unsubscribe`
+        );
         return;
     }
     
-    // 🔹 Отмена подписки
-    if (query.data === 'sub_no') {
-        await index.answerCallbackQuery(query.id, { text: 'Ок' });
-        await index.editMessageReplyMarkup({ 
-            chat_id: query.message.chat.id, 
-            message_id: query.message.message_id, 
-            reply_markup: { inline_keyboard: [] } 
-        });
-        await index.sendMessage(query.message.chat.id, '👌 Хорошо, если передумаете — напишите /start');
-        return;
-    }
-    
-    // 🔹 Присоединение к ивенту
+    // 🔹 Ивент
     if (query.data === 'join_event') {
-        joinEvent(query.message.chat.id, query.from.id, query.from.first_name, query.message.message_id, query.id);
+        // Передаем query для безопасной обработки внутри joinEvent
+        joinEvent(
+            query.message.chat.id, 
+            query.from.id, 
+            query.from.first_name || 'User', 
+            query.message.message_id, 
+            query.id
+        );
         return;
     }
 });
 
-// Команда /unsubscribe (работает в личке и в группе)
+// 🛡️ Вспомогательная функция: безопасный ответ на callback
+async function safeAnswerCallback(query, text = '', show_alert = false) {
+    try {
+        await index.answerCallbackQuery(query.id, { text, show_alert });
+    } catch (err) {
+        // Игнорируем "устаревшие" запросы — это нормально
+        const desc = err.response?.body?.description;
+        if (desc && (
+            desc.includes('query is too old') || 
+            desc.includes('timeout expired') || 
+            desc.includes('query ID is invalid')
+        )) {
+            return; // Не считаем это ошибкой
+        }
+        console.warn('⚠️ Ошибка answerCallbackQuery:', err.message);
+    }
+}
+
+// 🛡️ Вспомогательная функция: безопасное редактирование клавиатуры
+async function safeEditMarkup(query, markup) {
+    try {
+        const chatId = query.message?.chat?.id;
+        const messageId = query.message?.message_id;
+        
+        if (!chatId || !messageId) {
+            console.warn('⚠️ Нет chat_id или message_id для редактирования');
+            return;
+        }
+
+        await index.editMessageReplyMarkup(markup, {
+            chat_id: chatId,
+            message_id: messageId
+        });
+    } catch (err) {
+        const desc = err.response?.body?.description;
+        // Игнорируем частые "безопасные" ошибки
+        if (desc && (
+            desc.includes('message is not modified') ||
+            desc.includes('message can\'t be edited') ||
+            desc.includes('message identifier is not specified') ||
+            desc.includes('query is too old') ||
+            desc.includes('timeout expired')
+        )) {
+            return;
+        }
+        console.warn('⚠️ Ошибка editMessageReplyMarkup:', err.message);
+    }
+}
+
+// Команда /unsubscribe (работает везде)
 index.onText(/\/unsubscribe/, (msg) => {
     unsubscribeUser(msg.from.id);
-    index.sendMessage(msg.chat.id, '✅ Вы отписаны от уведомлений. Чтобы подписаться снова: /start');
+    index.sendMessage(msg.chat.id, '✅ Вы отписаны. Чтобы подписаться снова: /start');
 });
 
 // 2. Запуск ивента
@@ -295,6 +336,7 @@ index.onText(/\/event_start(?:\s+(\d+))?/, async (msg, match) => {
     console.log(`📢 Админ ${msg.from.first_name} запустил сбор на ${durationSec} сек.`);
     activeEvents[chatId] = { participants: [], startTime: Date.now(), duration: durationSec * 1000 };
 
+    // Исправленная часть: callback_data: вместо callback_
     await sendWithMentions(chatId, `📢 **АДМИН ЗАПУСТИЛ СБОР НА ИВЕНТ!**\n⏳ Время сбора: ${Math.floor(durationSec / 60)} мин.\n\nНажмите кнопку ниже, чтобы записаться!`, {
         reply_markup: {
             inline_keyboard: [[{ text: "⚔️ Я в деле!", callback_data: "join_event" }]]
@@ -307,7 +349,7 @@ index.onText(/\/event_start(?:\s+(\d+))?/, async (msg, match) => {
     activeEvents[chatId].timerId = timerId;
 });
 
-// 3. Ручное присоединение /join
+// 3. /join
 index.onText(/\/join/, (msg) => {
     if (activeEvents[msg.chat.id]) {
         joinEvent(msg.chat.id, msg.from.id, msg.from.first_name, null, null);
@@ -316,12 +358,36 @@ index.onText(/\/join/, (msg) => {
     }
 });
 
+// 🛡️ Обновлённая безопасная функция (универсальная)
+async function safeEditMarkupById(chatId, messageId, markup) {
+    try {
+        if (!chatId || !messageId) return;
+        
+        await index.editMessageReplyMarkup(markup, {
+            chat_id: chatId,
+            message_id: messageId
+        });
+    } catch (err) {
+        const desc = err.response?.body?.description;
+        if (desc && (
+            desc.includes('message is not modified') ||
+            desc.includes('message can\'t be edited') ||
+            desc.includes('message identifier is not specified') ||
+            desc.includes('query is too old') ||
+            desc.includes('timeout expired')
+        )) {
+            return;
+        }
+        console.warn('⚠️ Ошибка editMessageReplyMarkup:', err.message);
+    }
+}
+
 function joinEvent(chatId, userId, userName, messageId = null, queryId = null) {
     const event = activeEvents[chatId];
     if (!event) return;
 
     if (event.participants.some(p => p.id === userId)) {
-        if (queryId) index.answerCallbackQuery(queryId, { text: 'Вы уже в списке!', show_alert: true });
+        if (queryId) safeAnswerCallback(queryId, 'Вы уже в списке!', true);
         else index.sendMessage(chatId, 'Вы уже записаны! ✅');
         return;
     }
@@ -332,17 +398,29 @@ function joinEvent(chatId, userId, userName, messageId = null, queryId = null) {
 
     if (messageId && queryId) {
         const newText = `📢 **СБОР НА ИВЕНТ**\n⏳ Осталось: ${timeLeft} сек.\n👥 Участников: ${count}\n\nПоследний присоединился: ${userName}`;
+        
+        // ✅ Обновляем кнопку
+        safeEditMarkupById(chatId, messageId, { 
+            inline_keyboard: [[{ text: "⚔️ Я в деле!", callback_data: "join_event" }]] 
+        });
+        
+        // ✅ Обновляем текст сообщения
         index.editMessageText(newText, {
-            chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [[{ text: "⚔️ Я в деле!", callback_data: "join_event" }]] }
+            chat_id: chatId,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: { 
+                inline_keyboard: [[{ text: "⚔️ Я в деле!", callback_data: "join_event" }]] 
+            }
         }).catch(() => {});
-        index.answerCallbackQuery(queryId, { text: 'Вы успешно добавлены! ⚔️' });
+        
+        safeAnswerCallback(queryId, 'Вы успешно добавлены! ⚔️');
     } else {
         index.sendMessage(chatId, `✅ ${userName} присоединился! (Всего: ${count})`);
     }
 }
 
-// 4. Остановка /event_stop
+// 4. /event_stop
 index.onText(/\/event_stop/, async (msg) => {
     const chatId = msg.chat.id;
     const isUserAdmin = await isAdmin(chatId, msg.from.id);
