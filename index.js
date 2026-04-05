@@ -82,7 +82,7 @@ function makeMentionChunks(userIds, chunkSize = 30) {
     return chunks;
 }
 
-// 📢 Рассылка: группы + личка подписчикам
+// Рассылка: группы
 async function broadcastToChats(text) {
     console.log(`📢 Рассылка: "${text}" для ${registeredChats.size} групп`);
     
@@ -122,23 +122,7 @@ async function broadcastToChats(text) {
         }
         await new Promise(res => setTimeout(res, 50));
     }
-    
-    // Личка подписчикам
-    if (subscribers.length > 0) {
-        console.log(`📬 Отправка в личку ${subscribers.length} подписчикам`);
-        for (const userId of subscribers) {
-            try {
-                await index.sendMessage(userId, text, { parse_mode: 'HTML' });
-                console.log(`✅ Доставлено в личку ${userId}`);
-            } catch (err) {
-                console.warn(`⚠️ Не удалось отправить в личку ${userId}:`, err.message);
-                if (err.response?.body?.error_code === 403) {
-                    unsubscribeUser(userId);
-                }
-            }
-            await new Promise(res => setTimeout(res, 30));
-        }
-    }
+     
 }
 
 // 🎯 Отправка с упоминаниями (для ивентов)
@@ -437,7 +421,7 @@ index.onText(/\/event_stop/, async (msg) => {
     }
 });
 
-// Финал ивента
+// Финал ивента — только в группу!
 function finishEvent(chatId) {
     const event = activeEvents[chatId];
     if (!event) return;
@@ -456,11 +440,11 @@ function finishEvent(chatId) {
             mentionList += `<a href="tg://user?id=${p.id}">${safeName}</a>`;
             if (index < count - 1) mentionList += ', ';
         });
-        finalMessage = `🔥 **КЛАНОВЫЙ ИВЕНТ НАЧИНАЕТСЯ!** 🔥\n\n⚔️ Пора в бой!\n\n👥 **Список участников (${count}):**\n${mentionList}\n\n⚠️ **ВАЖНОЕ ПРЕДУПРЕЖДЕНИЕ:**\nВсе, кто записался в список выше, обязаны явиться!\n❌ <b>В случае неявки без уважительной причины — обязательный отчет перед администрацией!</b>`;
+        finalMessage = `🔥 <b>КЛАНОВЫЙ ИВЕНТ НАЧИНАЕТСЯ!</b> 🔥\n\n⚔️ Пора в бой!\n\n👥 <b>Список участников (${count}):</b>\n${mentionList}\n\n⚠️ <b>ВАЖНОЕ ПРЕДУПРЕЖДЕНИЕ:</b>\nВсе, кто записался в список выше, обязаны явиться!\n❌ <b>В случае неявки без уважительной причины — обязательный отчет перед администрацией!</b>`;
     }
 
     sendWithMentions(chatId, finalMessage).catch(err => {
-        if (err.response && err.response.body.description.includes('have no rights')) {
+        if (err.response?.body?.description?.includes('have no rights')) {
             index.sendMessage(chatId, '⚠️ ОШИБКА: Дайте боту права админа для упоминаний!');
         }
     });
