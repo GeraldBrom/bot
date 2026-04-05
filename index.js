@@ -177,26 +177,53 @@ async function isAdmin(chatId, userId) {
     }
 }
 
-// 1. Команда /start — ПРОСТАЯ ПОДПИСКА ОДНОЙ КНОПКОЙ В ГРУППЕ
+// 1. Команда /start — с умными кнопками по статусу подписки
 index.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
-    const userName = msg.from.first_name;
+    const userName = msg.from.first_name || 'Пользователь';
     const userId = msg.from.id;
     
+    // 🔹 В группе
     if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
         registerChat(chatId);
-        index.sendMessage(chatId, `Привет, ${userName}! 👋\n\nХочешь получать уведомления о клановых ивентах?`, {
-            reply_markup: {
-                inline_keyboard: [[
-                    { text: "✅ Подписаться", callback_data: `sub_${userId}` }
-                ]]
-            }
+        
+        const isUserAdmin = await isAdmin(chatId, userId);
+        const isSubscribed = subscribers.includes(userId);
+        
+        // Кнопка подписки/отписки
+        const keyboard = [[
+            isSubscribed 
+                ? { text: "❌ Отписаться", callback_data: `unsub_${userId}` }
+                : { text: "✅ Подписаться", callback_data: `sub_${userId}` }
+        ]];
+        
+        // ➕ Админские кнопки
+        if (isUserAdmin) {
+            keyboard.push(
+                [
+                    { text: "🚀 Старт ивента", callback_data: "admin_event_start" },
+                    { text: "📢 Общий зов", callback_data: "admin_call" }
+                ],
+                [{ text: "🛑 Стоп ивент", callback_data: "admin_event_stop" }]
+            );
+        }
+        
+        const statusText = isSubscribed 
+            ? `Привет, ${userName}! 👋\n\n✅ Вы уже подписаны на уведомления!\nМожете отписаться в любой момент.`
+            : `Привет, ${userName}! 👋\n\nХочешь получать уведомления о клановых ивентах?`;
+        
+        index.sendMessage(chatId, statusText, {
+            reply_markup: { inline_keyboard: keyboard },
+            parse_mode: 'HTML'
         });
         return;
     }
     
+    // 🔹 В личных сообщениях
     if (msg.chat.type === 'private') {
-        index.sendMessage(chatId, `Привет, ${userName}! 👋\n\nЧтобы подписаться — напиши /start в группе.`);
+        index.sendMessage(chatId, `Привет, ${userName}! 👋\n\nЧтобы подписаться — напиши /start в группе.`, {
+            parse_mode: 'HTML'
+        });
     }
 });
 
@@ -205,30 +232,79 @@ index.on('callback_query', async (query) => {
     if (query.data?.startsWith('sub_')) {
         const targetUserId = parseInt(query.data.replace('sub_', ''));
         
-        // Защита: только тот, кому адресована кнопка
         if (query.from.id !== targetUserId) {
-            // Игнорируем ошибку, если время ответа истекло
             await safeAnswerCallback(query, '⛔ Это не ваша кнопка', true);
             return;
         }
         
-        // Сначала отвечаем на callback (чтобы убрать "часики" загрузки)
         await safeAnswerCallback(query, '✅ Вы подписаны!');
-        
-        // Скрываем кнопку
         await safeEditMarkup(query, { inline_keyboard: [] });
         
-        // Основная логика
         subscribeUser(targetUserId);
         await index.sendMessage(query.message.chat.id, 
-            ` Готово, ${query.from.first_name}! Теперь вы будете получать уведомления.\nОтписаться: /unsubscribe`
+            `✅ Готово, ${query.from.first_name}! Теперь вы будете получать уведомления.\nОтписаться: /unsubscribe`
         );
         return;
     }
     
-    // 🔹 Ивент
+    // 🔹 Отписка: unsub_USERID (НОВОЕ!)
+    if (query.data?.startsWith('unsub_')) {
+        const targetUserId = parseInt(query.data.replace('unsub_', ''));
+        
+        if (query.from.id !== targetUserId) {
+            await safeAnswerCallback(query, '⛔ Это не ваша кнопка', true);
+            return;
+        }
+        
+        await safeAnswerCallback(query, '❌ Вы отписаны!');
+        await safeEditMarkup(query, { inline_keyboard: [] });
+        
+        unsubscribeUser(targetUserId);
+        await index.sendMessage(query.message.chat.id, 
+            `❌ ${query.from.first_name}, вы отписаны от уведомений.\nПодписаться снова: /start`
+        );
+        return;
+    }
+    
+    // 🔹 Админские кнопки
+    if (query.data === 'admin_event_start') {
+        const isUserAdmin = await isAdmin(query.message.chat.id, query.from.id);
+        if (!isUserAdmin) {
+            return index.answerCallbackQuery(query.id, { text: '⛔ У вас нет прав', show_alert: true });
+        }
+        index.sendMessage(query.message.chat.id, '⚡ Быстрый старт ивента на 5 минут...\nИспользуйте /event_stop для остановки.');
+        // Здесь можно вызвать логику /event_start 300, если нужно
+        return index.answerCallbackQuery(query.id, { text: '🚀 Ивент запущен!' });
+    }
+
+    if (query.data === 'admin_call') {
+        const isUserAdmin = await isAdmin(query.message.chat.id, query.from.id);
+        if (!isUserAdmin) {
+            return index.answerCallbackQuery(query.id, { text: '⛔ У вас нет прав', show_alert: true });
+        }
+        const callMessage = '📢 <b>ОДИН ЗОВЕТ СВОИХ ВОИНОВ!</b> ⚔️\n\n⏳ Собирайтесь срочно!';
+        await sendWithMentions(query.message.chat.id, callMessage);
+        return index.answerCallbackQuery(query.id, { text: '📢 Зов отправлен!' });
+    }
+
+    if (query.data === 'admin_event_stop') {
+        const chatId = query.message.chat.id;
+        const isUserAdmin = await isAdmin(chatId, query.from.id);
+        if (!isUserAdmin) {
+            return index.answerCallbackQuery(query.id, { text: '⛔ У вас нет прав', show_alert: true });
+        }
+        if (activeEvents[chatId]) {
+            clearTimeout(activeEvents[chatId].timerId);
+            delete activeEvents[chatId];
+            index.sendMessage(chatId, '🛑 Сбор отменен администратором.');
+        } else {
+            index.sendMessage(chatId, 'Нет активного сбора.');
+        }
+        return index.answerCallbackQuery(query.id, { text: '✅ Остановлено' });
+    }
+    
+    // 🔹 Ивент: присоединиться
     if (query.data === 'join_event') {
-        // Передаем query для безопасной обработки внутри joinEvent
         joinEvent(
             query.message.chat.id, 
             query.from.id, 
@@ -418,6 +494,44 @@ index.onText(/\/event_stop/, async (msg) => {
         index.sendMessage(chatId, '🛑 Сбор отменен администратором.');
     } else {
         index.sendMessage(chatId, 'Нет активного сбора.');
+    }
+});
+
+// 5. Общий зов (только для админов)
+index.onText(/\/call/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+
+    // 🔒 Работает только в группах
+    if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') {
+        return index.sendMessage(chatId, '⛔ Эта команда работает только в группах!');
+    }
+
+    // 🔒 Проверка прав админа
+    const isUserAdmin = await isAdmin(chatId, userId);
+    if (!isUserAdmin) {
+        return index.sendMessage(chatId, '⛔ Только админы могут использовать общий зов!');
+    }
+
+    // 🔍 Проверка подписчиков
+    if (subscribers.length === 0) {
+        return index.sendMessage(chatId, '⚠️ В группе пока нет подписчиков на уведомления.');
+    }
+
+    // 📝 Текст зова
+    const callMessage = '📢 <b>ОДИН ЗОВЕТ СВОИХ ВОИНОВ!</b> ⚔️\n\n⏳ Собирайтесь срочно! Не оставайтесь в стороне. А иначе (T_T) ';
+
+    console.log(`📢 Админ ${msg.from.first_name} запустил общий зов в группе ${chatId} (${subscribers.length} подписчиков)`);
+
+    try {
+        // 📡 Отправка с упоминаниями (автоматически разбивает на чанки)
+        await sendWithMentions(chatId, callMessage);
+        
+        // ✅ Подтверждение в чат (опционально)
+        // index.sendMessage(chatId, `✅ Общий зов отправлен! Упомянуто ${subscribers.length} участников.`);
+    } catch (err) {
+        console.error('❌ Ошибка при отправке общего зова:', err.message);
+        index.sendMessage(chatId, '⚠️ Произошла ошибка при рассылке зова.');
     }
 });
 
